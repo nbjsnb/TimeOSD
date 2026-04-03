@@ -1,18 +1,19 @@
 ﻿# TimeOSD
 
-TimeOSD is a desktop tool for adding timestamp OSD to timelapse videos.
+TimeOSD 是一个给视频补充时间戳 OSD（屏显）的桌面工具，重点面向运动相机缩时/增稳后无时间戳的后处理场景。
 
-## Features (MVP)
+## 主要功能
 
-- Load a video file and preview playback.
-- Read base timestamp from file ctime (fallback) or manual input.
-- Configure timelapse capture interval.
-- Configure OSD style and position.
-- Preview dynamic OSD in app.
-- Export `.ass` subtitle and burn-in with FFmpeg.
-- Optional NVENC encoding (`h264_nvenc`) with software fallback.
+- 加载视频并实时预览
+- 读取视频基础信息（时长、帧率、分辨率）
+- 支持缩时模式与正常速率模式
+- 支持模板化时间文本（如 `{datetime}`）
+- 支持样式调整与拖拽定位
+- 生成 `.ass` 字幕并使用 FFmpeg 烧录到视频
+- 支持 20 秒测试导出与全片导出
+- 支持 NVENC（`h264_nvenc`）与 CPU 编码回退
 
-## Install
+## 安装
 
 ```powershell
 python -m venv .venv
@@ -20,21 +21,35 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Run
+## 运行
 
-Option 1 (recommended on Windows):
+方式 1（Windows 推荐）：
 
 ```bat
 run_timeosd.bat
 ```
 
-Option 2:
+方式 2：
 
 ```powershell
 python app.py
 ```
 
-## Notes
+## FFmpeg 依赖说明
 
-- OSD refresh rate is capped at 5 updates/second.
-- FFmpeg/FFprobe must be available in `PATH`.
+本项目依赖 `ffmpeg` 和 `ffprobe`：
+
+- `ffprobe` 用于读取视频元信息
+- `ffmpeg` 用于烧录字幕并导出视频
+
+请确保二者可在命令行直接运行（已加入 `PATH`）。
+
+FFmpeg 官网：
+
+- https://ffmpeg.org/
+- 下载页：https://ffmpeg.org/download.html
+
+## 备注
+
+- OSD 刷新频率上限为 5 次/秒（按频率模式）
+- 若启用“ASS按帧更新”，将按每帧生成字幕（文件更大，导出更慢）
