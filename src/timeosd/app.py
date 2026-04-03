@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from .ass_writer import write_ass
-from .ffmpeg_ops import build_burn_command
+from .ffmpeg_ops import build_burn_command, build_soft_mux_command
 from .models import OsdStyle, TimeConfig
 from .templating import render_template
 from .time_engine import real_elapsed_from_frame, real_time_at_frame
@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self.video_fps: float = 30.0
         self.video_width: int = 1920
         self.video_height: int = 1080
+        self.video_codec: str = "unknown"
         self.generated_ass_path: Path | None = None
         self.ffmpeg_bin = resolve_tool_binary("ffmpeg")
         self.ffprobe_bin = resolve_tool_binary("ffprobe")
@@ -221,7 +222,14 @@ class MainWindow(QMainWindow):
         self.chk_use_ass_preview = QCheckBox("优先使用已加载ASS字幕预览")
         self.chk_use_ass_preview.setChecked(False)
 
-        self.chk_nvenc = QCheckBox("使用 NVENC (h264_nvenc)")
+        self.combo_export_mode = QComboBox()
+        self.combo_export_mode.addItems(["硬字幕(重新编码)", "软字幕封装MKV(不重编码)"])
+        self.combo_export_mode.setCurrentIndex(0)
+
+        self.chk_keep_source_codec = QCheckBox("硬字幕沿用原视频编码类型")
+        self.chk_keep_source_codec.setChecked(True)
+
+        self.chk_nvenc = QCheckBox("使用 NVENC")
         self.chk_nvenc.setChecked(True)
 
         self.edit_output = QLineEdit()
@@ -259,9 +267,11 @@ class MainWindow(QMainWindow):
         form.addRow("垂直边距", self.spin_margin_y)
         form.addRow("字幕文件操作", subtitle_btn_row)
         form.addRow("配置预设", preset_row)
+        form.addRow("输出模式", self.combo_export_mode)
+        form.addRow("硬字幕编码", self.chk_keep_source_codec)
+        form.addRow("编码器", self.chk_nvenc)
         form.addRow("输出视频路径", self.edit_output)
         form.addRow("预览模式", self.chk_use_ass_preview)
-        form.addRow("编码器", self.chk_nvenc)
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -287,6 +297,8 @@ class MainWindow(QMainWindow):
         self.btn_export_20s.clicked.connect(self.on_export_20s)
         self.btn_export.clicked.connect(self.on_export_full)
 
+        self.combo_export_mode.currentIndexChanged.connect(self.on_export_mode_changed)
+
         self.slider.sliderPressed.connect(self.on_slider_pressed)
         self.slider.sliderReleased.connect(self.on_slider_released)
         self.slider.sliderMoved.connect(self.on_slider_moved)
@@ -309,6 +321,7 @@ class MainWindow(QMainWindow):
         self.chk_normal_speed.toggled.connect(self.on_normal_speed_toggled)
         self.on_per_frame_toggled(self.chk_per_frame_ass.isChecked())
         self.on_normal_speed_toggled(self.chk_normal_speed.isChecked())
+        self.on_export_mode_changed(self.combo_export_mode.currentIndex())
 
         self.apply_overlay_style()
         self.fit_scene_to_view()
@@ -331,6 +344,20 @@ class MainWindow(QMainWindow):
         self.spin_interval.setEnabled(not checked)
         if checked:
             self.log.appendPlainText("已启用正常速率模式: 拍摄间隔参数将被忽略。")
+
+    def on_export_mode_changed(self, _index: int) -> None:
+        is_hard = self.combo_export_mode.currentIndex() == 0
+        self.chk_keep_source_codec.setEnabled(is_hard)
+        self.chk_nvenc.setEnabled(is_hard)
+
+        cur = self.edit_output.text().strip()
+        if not cur:
+            return
+        out = Path(cur)
+        target_suffix = ".mp4" if is_hard else ".mkv"
+        if out.suffix.lower() != target_suffix:
+            out = out.with_suffix(target_suffix)
+            self.edit_output.setText(str(out))
 
     def load_presets_from_disk(self) -> None:
         if not self.preset_file.exists():
@@ -373,6 +400,8 @@ class MainWindow(QMainWindow):
             "margin_x": int(self.spin_margin_x.value()),
             "margin_y": int(self.spin_margin_y.value()),
             "use_ass_preview": self.chk_use_ass_preview.isChecked(),
+            "export_mode": int(self.combo_export_mode.currentIndex()),
+            "keep_source_codec": self.chk_keep_source_codec.isChecked(),
             "nvenc": self.chk_nvenc.isChecked(),
             "output_path": self.edit_output.text().strip(),
         }
@@ -400,6 +429,8 @@ class MainWindow(QMainWindow):
         self.spin_margin_x.setValue(int(cfg.get("margin_x", self.spin_margin_x.value())))
         self.spin_margin_y.setValue(int(cfg.get("margin_y", self.spin_margin_y.value())))
         self.chk_use_ass_preview.setChecked(bool(cfg.get("use_ass_preview", self.chk_use_ass_preview.isChecked())))
+        self.combo_export_mode.setCurrentIndex(int(cfg.get("export_mode", self.combo_export_mode.currentIndex())))
+        self.chk_keep_source_codec.setChecked(bool(cfg.get("keep_source_codec", self.chk_keep_source_codec.isChecked())))
         self.chk_nvenc.setChecked(bool(cfg.get("nvenc", self.chk_nvenc.isChecked())))
         if cfg.get("output_path"):
             self.edit_output.setText(str(cfg.get("output_path")))
@@ -474,6 +505,7 @@ class MainWindow(QMainWindow):
 
         out = self.video_path.with_name(self.video_path.stem + "_osd.mp4")
         self.edit_output.setText(str(out))
+        self.on_export_mode_changed(self.combo_export_mode.currentIndex())
         self.generated_ass_path = out.with_suffix(".ass")
 
         ctime = datetime.fromtimestamp(self.video_path.stat().st_ctime)
@@ -498,19 +530,20 @@ class MainWindow(QMainWindow):
         if not self.video_path:
             return
         if not self.ffprobe_bin:
-            self.log.appendPlainText("??? ffprobe???? FFmpeg??? ffprobe.exe ???????")
+            self.log.appendPlainText("未找到 ffprobe：请安装 FFmpeg，或将 ffprobe.exe 放到程序目录。")
             QMessageBox.warning(
                 self,
-                "?? FFprobe",
-                "??? ffprobe?\n??? FFmpeg ??? PATH??? ffprobe.exe ????????",
+                "缺少 FFprobe",
+                "未找到 ffprobe。\n请安装 FFmpeg 并加入 PATH，或把 ffprobe.exe 放到程序同目录。",
             )
             return
         try:
-            duration, fps, width, height = probe_video(self.video_path, self.ffprobe_bin)
+            duration, fps, width, height, codec = probe_video(self.video_path, self.ffprobe_bin)
             self.video_duration_sec = duration
             self.video_fps = fps if fps > 0 else 30.0
             self.video_width = max(16, width)
             self.video_height = max(16, height)
+            self.video_codec = codec or "unknown"
 
             self.scene.setSceneRect(0, 0, self.video_width, self.video_height)
             self.video_item.setSize(self.scene.sceneRect().size())
@@ -520,7 +553,7 @@ class MainWindow(QMainWindow):
             self.place_overlay_text()
 
             self.log.appendPlainText(
-                f"视频信息: 时长={self.video_duration_sec:.3f}s, 帧率={self.video_fps:.3f}, 分辨率={self.video_width}x{self.video_height}"
+                f"视频信息: 时长={self.video_duration_sec:.3f}s, 帧率={self.video_fps:.3f}, 分辨率={self.video_width}x{self.video_height}, 编码={self.video_codec}"
             )
         except Exception as ex:
             self.log.appendPlainText(f"读取元信息失败: {ex}")
@@ -540,14 +573,6 @@ class MainWindow(QMainWindow):
 
         if self.video_duration_sec <= 0.0:
             self.on_probe()
-        if not self.ffmpeg_bin:
-            self.log.appendPlainText("??? ffmpeg???? FFmpeg??? ffmpeg.exe ???????")
-            QMessageBox.warning(
-                self,
-                "?? FFmpeg",
-                "??? ffmpeg?\n??? FFmpeg ??? PATH??? ffmpeg.exe ????????",
-            )
-            return
 
         cfg = self.build_time_config()
         style = self.build_style()
@@ -609,6 +634,12 @@ class MainWindow(QMainWindow):
             return
 
         output_path = Path(output_text)
+        is_hard_sub = self.combo_export_mode.currentIndex() == 0
+        target_suffix = ".mp4" if is_hard_sub else ".mkv"
+        if output_path.suffix.lower() != target_suffix:
+            output_path = output_path.with_suffix(target_suffix)
+            self.edit_output.setText(str(output_path))
+
         if preview_20s:
             output_path = output_path.with_name(output_path.stem + "_preview20s" + output_path.suffix)
 
@@ -616,6 +647,14 @@ class MainWindow(QMainWindow):
 
         if self.video_duration_sec <= 0.0:
             self.on_probe()
+        if not self.ffmpeg_bin:
+            self.log.appendPlainText("未找到 ffmpeg：请安装 FFmpeg，或将 ffmpeg.exe 放到程序目录。")
+            QMessageBox.warning(
+                self,
+                "缺少 FFmpeg",
+                "未找到 ffmpeg。\n请安装 FFmpeg 并加入 PATH，或把 ffmpeg.exe 放到程序同目录。",
+            )
+            return
 
         cfg = self.build_time_config()
         style = self.build_style()
@@ -636,17 +675,29 @@ class MainWindow(QMainWindow):
         start_sec = 0.0 if preview_20s else None
         duration_sec = 20.0 if preview_20s else None
 
-        cmd = build_burn_command(
-            ffmpeg_bin=self.ffmpeg_bin,
-            input_video=self.video_path,
-            ass_file=ass_path,
-            output_video=output_path,
-            use_nvenc=self.chk_nvenc.isChecked(),
-            start_sec=start_sec,
-            duration_sec=duration_sec,
-        )
+        if is_hard_sub:
+            cmd = build_burn_command(
+                ffmpeg_bin=self.ffmpeg_bin,
+                input_video=self.video_path,
+                ass_file=ass_path,
+                output_video=output_path,
+                use_nvenc=self.chk_nvenc.isChecked(),
+                keep_source_codec=self.chk_keep_source_codec.isChecked(),
+                source_codec=self.video_codec,
+                start_sec=start_sec,
+                duration_sec=duration_sec,
+            )
+        else:
+            cmd = build_soft_mux_command(
+                ffmpeg_bin=self.ffmpeg_bin,
+                input_video=self.video_path,
+                ass_file=ass_path,
+                output_video=output_path,
+                start_sec=start_sec,
+                duration_sec=duration_sec,
+            )
 
-        label = "开始渲染20秒测试" if preview_20s else "开始渲染全片"
+        label = "开始导出20秒测试" if preview_20s else "开始导出全片"
         self.log.appendPlainText(f"{label}: " + " ".join(cmd))
         self.btn_export.setEnabled(False)
         self.btn_export_20s.setEnabled(False)
@@ -786,7 +837,7 @@ class MainWindow(QMainWindow):
         )
 
 
-def probe_video(video_path: Path, ffprobe_bin: str) -> tuple[float, float, int, int]:
+def probe_video(video_path: Path, ffprobe_bin: str) -> tuple[float, float, int, int, str]:
     cmd = [
         ffprobe_bin,
         "-v",
@@ -794,7 +845,7 @@ def probe_video(video_path: Path, ffprobe_bin: str) -> tuple[float, float, int, 
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=avg_frame_rate,r_frame_rate,width,height:format=duration",
+        "stream=avg_frame_rate,r_frame_rate,width,height,codec_name:format=duration",
         "-of",
         "json",
         str(video_path),
@@ -808,6 +859,8 @@ def probe_video(video_path: Path, ffprobe_bin: str) -> tuple[float, float, int, 
     width = 1920
     height = 1080
 
+    codec = "unknown"
+
     streams = data.get("streams", [])
     if streams:
         s0 = streams[0]
@@ -815,8 +868,9 @@ def probe_video(video_path: Path, ffprobe_bin: str) -> tuple[float, float, int, 
         fps = parse_fps(rate)
         width = int(s0.get("width") or width)
         height = int(s0.get("height") or height)
+        codec = str(s0.get("codec_name") or codec)
 
-    return duration, fps, width, height
+    return duration, fps, width, height, codec
 
 
 def parse_fps(expr: str) -> float:
