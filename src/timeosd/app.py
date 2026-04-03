@@ -3,6 +3,8 @@
 import json
 import re
 import subprocess
+import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -81,6 +83,8 @@ class MainWindow(QMainWindow):
         self.video_width: int = 1920
         self.video_height: int = 1080
         self.generated_ass_path: Path | None = None
+        self.ffmpeg_bin = resolve_tool_binary("ffmpeg")
+        self.ffprobe_bin = resolve_tool_binary("ffprobe")
 
         self.preset_file = Path(__file__).resolve().parents[2] / "timeosd_presets.json"
         self.presets: dict[str, dict] = {}
@@ -493,8 +497,16 @@ class MainWindow(QMainWindow):
     def on_probe(self) -> None:
         if not self.video_path:
             return
+        if not self.ffprobe_bin:
+            self.log.appendPlainText("??? ffprobe???? FFmpeg??? ffprobe.exe ???????")
+            QMessageBox.warning(
+                self,
+                "?? FFprobe",
+                "??? ffprobe?\n??? FFmpeg ??? PATH??? ffprobe.exe ????????",
+            )
+            return
         try:
-            duration, fps, width, height = probe_video(self.video_path)
+            duration, fps, width, height = probe_video(self.video_path, self.ffprobe_bin)
             self.video_duration_sec = duration
             self.video_fps = fps if fps > 0 else 30.0
             self.video_width = max(16, width)
@@ -528,6 +540,14 @@ class MainWindow(QMainWindow):
 
         if self.video_duration_sec <= 0.0:
             self.on_probe()
+        if not self.ffmpeg_bin:
+            self.log.appendPlainText("??? ffmpeg???? FFmpeg??? ffmpeg.exe ???????")
+            QMessageBox.warning(
+                self,
+                "?? FFmpeg",
+                "??? ffmpeg?\n??? FFmpeg ??? PATH??? ffmpeg.exe ????????",
+            )
+            return
 
         cfg = self.build_time_config()
         style = self.build_style()
@@ -617,7 +637,7 @@ class MainWindow(QMainWindow):
         duration_sec = 20.0 if preview_20s else None
 
         cmd = build_burn_command(
-            ffmpeg_bin="ffmpeg",
+            ffmpeg_bin=self.ffmpeg_bin,
             input_video=self.video_path,
             ass_file=ass_path,
             output_video=output_path,
@@ -766,9 +786,9 @@ class MainWindow(QMainWindow):
         )
 
 
-def probe_video(video_path: Path) -> tuple[float, float, int, int]:
+def probe_video(video_path: Path, ffprobe_bin: str) -> tuple[float, float, int, int]:
     cmd = [
-        "ffprobe",
+        ffprobe_bin,
         "-v",
         "error",
         "-select_streams",
@@ -859,6 +879,41 @@ def format_hhmmss(seconds: float) -> str:
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def resolve_tool_binary(tool_name: str) -> str:
+    exe_name = f"{tool_name}.exe" if sys.platform.startswith("win") else tool_name
+
+    found = shutil.which(exe_name) or shutil.which(tool_name)
+    if found:
+        return found
+
+    candidates: list[Path] = []
+
+    # PyInstaller onefile extraction directory.
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        mp = Path(meipass)
+        candidates.append(mp / exe_name)
+        candidates.append(mp / tool_name)
+        candidates.append(mp / "ffmpeg" / "bin" / exe_name)
+        candidates.append(mp / "tools" / "ffmpeg" / "bin" / exe_name)
+
+    app_dir = Path(sys.executable).resolve().parent
+    candidates.append(app_dir / exe_name)
+    candidates.append(app_dir / tool_name)
+    candidates.append(app_dir / "ffmpeg" / "bin" / exe_name)
+    candidates.append(app_dir / "tools" / "ffmpeg" / "bin" / exe_name)
+
+    root_dir = Path(__file__).resolve().parents[2]
+    candidates.append(root_dir / exe_name)
+    candidates.append(root_dir / "ffmpeg" / "bin" / exe_name)
+    candidates.append(root_dir / "tools" / "ffmpeg" / "bin" / exe_name)
+
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return ""
 
 
 def run() -> int:
