@@ -1,0 +1,7 @@
+﻿__pycache__/
+*.pyc
+*.pyo
+*.ass
+*.mp4
+.venv/
+timeosd_presets.json
