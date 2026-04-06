@@ -74,6 +74,7 @@ class DraggableTextItem(QGraphicsTextItem):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.lang = "zh"
         self.setWindowTitle("TimeOSD")
         self.resize(1400, 860)
 
@@ -117,13 +118,16 @@ class MainWindow(QMainWindow):
         self.build_ui()
         self.load_presets_from_disk()
 
+    def l(self, zh: str, en: str) -> str:
+        return zh if self.lang == "zh" else en
+
     def build_ui(self) -> None:
         root = QWidget(self)
         self.setCentralWidget(root)
         grid = QGridLayout(root)
 
-        left_box = QGroupBox("视频预览")
-        left_layout = QVBoxLayout(left_box)
+        self.left_box = QGroupBox("视频预览")
+        left_layout = QVBoxLayout(self.left_box)
 
         self.scene = QGraphicsScene(self)
         self.scene.setSceneRect(0, 0, self.video_width, self.video_height)
@@ -138,7 +142,7 @@ class MainWindow(QMainWindow):
         self.overlay_item.setZValue(10)
         self.scene.addItem(self.overlay_item)
 
-        self.preview_view = PreviewView(self, left_box)
+        self.preview_view = PreviewView(self, self.left_box)
         self.preview_view.setScene(self.scene)
         self.preview_view.setMinimumSize(900, 560)
 
@@ -164,8 +168,9 @@ class MainWindow(QMainWindow):
         left_layout.addLayout(timeline_row)
         left_layout.addLayout(btn_row)
 
-        right_box = QGroupBox("参数设置")
-        form = QFormLayout(right_box)
+        self.right_box = QGroupBox("参数设置")
+        form = QFormLayout(self.right_box)
+        self.form = form
 
         self.edit_start = QDateTimeEdit(datetime.now())
         self.edit_start.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
@@ -271,15 +276,38 @@ class MainWindow(QMainWindow):
         form.addRow("编码器", self.chk_nvenc)
         form.addRow("输出视频路径", self.edit_output)
         form.addRow("预览模式", self.chk_use_ass_preview)
-        form.addRow("—— 配置管理 ——", QLabel("保存/加载/删除预设"))
+        self.lbl_preset_desc = QLabel("保存/加载/删除预设")
+        form.addRow("—— 配置管理 ——", self.lbl_preset_desc)
         form.addRow("配置预设", preset_row)
+
+        self.form_labels = {
+            self.edit_start: form.labelForField(self.edit_start),
+            self.chk_normal_speed: form.labelForField(self.chk_normal_speed),
+            self.spin_interval: form.labelForField(self.spin_interval),
+            self.spin_ups: form.labelForField(self.spin_ups),
+            self.chk_per_frame_ass: form.labelForField(self.chk_per_frame_ass),
+            self.edit_template: form.labelForField(self.edit_template),
+            self.combo_anchor: form.labelForField(self.combo_anchor),
+            self.spin_font: form.labelForField(self.spin_font),
+            self.edit_color: form.labelForField(self.edit_color),
+            self.spin_margin_x: form.labelForField(self.spin_margin_x),
+            self.spin_margin_y: form.labelForField(self.spin_margin_y),
+            subtitle_btn_row: form.labelForField(subtitle_btn_row),
+            self.combo_export_mode: form.labelForField(self.combo_export_mode),
+            self.chk_keep_source_codec: form.labelForField(self.chk_keep_source_codec),
+            self.chk_nvenc: form.labelForField(self.chk_nvenc),
+            self.edit_output: form.labelForField(self.edit_output),
+            self.chk_use_ass_preview: form.labelForField(self.chk_use_ass_preview),
+            self.lbl_preset_desc: form.labelForField(self.lbl_preset_desc),
+            preset_row: form.labelForField(preset_row),
+        }
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(3000)
 
-        grid.addWidget(left_box, 0, 0)
-        grid.addWidget(right_box, 0, 1)
+        grid.addWidget(self.left_box, 0, 0)
+        grid.addWidget(self.right_box, 0, 1)
         grid.addWidget(self.log, 1, 0, 1, 2)
 
         grid.setColumnStretch(0, 4)
@@ -320,6 +348,18 @@ class MainWindow(QMainWindow):
 
         self.chk_per_frame_ass.toggled.connect(self.on_per_frame_toggled)
         self.chk_normal_speed.toggled.connect(self.on_normal_speed_toggled)
+
+        lang_bar = self.addToolBar("lang")
+        lang_bar.setMovable(False)
+        self.lbl_lang = QLabel("语言")
+        self.combo_lang = QComboBox()
+        self.combo_lang.addItem("ZH", "zh")
+        self.combo_lang.addItem("ENG", "en")
+        self.combo_lang.setCurrentIndex(0)
+        self.combo_lang.currentIndexChanged.connect(self.on_language_changed)
+        lang_bar.addWidget(self.lbl_lang)
+        lang_bar.addWidget(self.combo_lang)
+
         self.on_per_frame_toggled(self.chk_per_frame_ass.isChecked())
         self.on_normal_speed_toggled(self.chk_normal_speed.isChecked())
         self.on_export_mode_changed(self.combo_export_mode.currentIndex())
@@ -327,13 +367,86 @@ class MainWindow(QMainWindow):
         self.apply_overlay_style()
         self.fit_scene_to_view()
         self.place_overlay_text()
+        self.retranslate_ui()
+
+    def on_language_changed(self, _index: int) -> None:
+        data = self.combo_lang.currentData()
+        if data in ("zh", "en"):
+            self.lang = data
+            self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle("TimeOSD")
+        self.left_box.setTitle(self.l("视频预览", "Video Preview"))
+        self.right_box.setTitle(self.l("参数设置", "Settings"))
+        # Intentional reverse label per product requirement:
+        # Chinese UI -> show English "language"; English UI -> show Chinese "语言".
+        self.lbl_lang.setText("language" if self.lang == "zh" else "语言")
+        self.combo_lang.setItemText(0, "ZH")
+        self.combo_lang.setItemText(1, "ENG")
+
+        self.btn_open.setText(self.l("加载视频", "Open Video"))
+        self.btn_play.setText(self.l("播放/暂停", "Play/Pause"))
+        self.btn_probe.setText(self.l("刷新元信息", "Refresh Metadata"))
+        self.btn_export_20s.setText(self.l("导出20秒测试", "Export 20s Test"))
+        self.btn_export.setText(self.l("导出并渲染", "Export and Render"))
+        self.btn_generate_ass.setText(self.l("生成字幕(ASS)", "Generate Subtitle (ASS)"))
+        self.btn_load_ass_preview.setText(self.l("加载字幕预览", "Load Subtitle Preview"))
+        self.btn_preset_save.setText(self.l("保存配置", "Save Preset"))
+        self.btn_preset_load.setText(self.l("加载配置", "Load Preset"))
+        self.btn_preset_delete.setText(self.l("删除配置", "Delete Preset"))
+
+        self.chk_normal_speed.setText(self.l("正常速率视频(1秒=1秒)", "Real-time Video (1s=1s)"))
+        self.chk_per_frame_ass.setText(self.l("ASS按帧更新(文件更大，导出更慢)", "ASS Per-frame Update (larger file, slower export)"))
+        self.chk_use_ass_preview.setText(self.l("优先使用已加载ASS字幕预览", "Prefer Loaded ASS Preview"))
+        self.chk_keep_source_codec.setText(self.l("硬字幕沿用原视频编码类型", "Keep Source Codec for Hard Subtitles"))
+        self.chk_nvenc.setText(self.l("使用 NVENC", "Use NVENC"))
+
+        current = self.combo_export_mode.currentIndex()
+        self.combo_export_mode.blockSignals(True)
+        self.combo_export_mode.clear()
+        self.combo_export_mode.addItems(
+            [
+                self.l("硬字幕(重新编码)", "Hard Subtitles (Re-encode)"),
+                self.l("软字幕封装MKV(不重编码)", "Soft Subtitles MKV (No Re-encode)"),
+            ]
+        )
+        self.combo_export_mode.setCurrentIndex(max(0, min(current, 1)))
+        self.combo_export_mode.blockSignals(False)
+        self.on_export_mode_changed(self.combo_export_mode.currentIndex())
+
+        self.form_labels[self.edit_start].setText(self.l("起始时间", "Start Time"))
+        self.form_labels[self.chk_normal_speed].setText(self.l("时间模式", "Time Mode"))
+        self.form_labels[self.spin_interval].setText(self.l("拍摄间隔(秒)", "Capture Interval (s)"))
+        self.form_labels[self.spin_ups].setText(self.l("字幕更新频率(次/秒, 最大5)", "Subtitle Update Rate (/s, max 5)"))
+        self.form_labels[self.chk_per_frame_ass].setText(self.l("ASS导出模式", "ASS Export Mode"))
+        self.form_labels[self.edit_template].setText(self.l("文本模板", "Text Template"))
+        self.form_labels[self.combo_anchor].setText(self.l("位置锚点", "Anchor"))
+        self.form_labels[self.spin_font].setText(self.l("字体大小", "Font Size"))
+        self.form_labels[self.edit_color].setText(self.l("字体颜色", "Font Color"))
+        self.form_labels[self.spin_margin_x].setText(self.l("水平边距", "Horizontal Margin"))
+        self.form_labels[self.spin_margin_y].setText(self.l("垂直边距", "Vertical Margin"))
+        self.form_labels[self.btn_generate_ass.parentWidget()].setText(self.l("字幕文件操作", "Subtitle File Ops"))
+        self.form_labels[self.combo_export_mode].setText(self.l("输出模式", "Output Mode"))
+        self.form_labels[self.chk_keep_source_codec].setText(self.l("硬字幕编码", "Hard Subtitle Codec"))
+        self.form_labels[self.chk_nvenc].setText(self.l("编码器", "Encoder"))
+        self.form_labels[self.edit_output].setText(self.l("输出视频路径", "Output Video Path"))
+        self.form_labels[self.chk_use_ass_preview].setText(self.l("预览模式", "Preview Mode"))
+        self.form_labels[self.lbl_preset_desc].setText(self.l("—— 配置管理 ——", "— Preset Management —"))
+        self.lbl_preset_desc.setText(self.l("保存/加载/删除预设", "Save/Load/Delete Presets"))
+        self.form_labels[self.combo_preset.parentWidget()].setText(self.l("配置预设", "Preset"))
 
     def on_per_frame_toggled(self, checked: bool) -> None:
         if checked and self.chk_normal_speed.isChecked() and not self.suppress_mode_toggle:
             self.suppress_mode_toggle = True
             self.chk_normal_speed.setChecked(False)
             self.suppress_mode_toggle = False
-            self.log.appendPlainText("已关闭‘正常速率视频’，因为‘ASS按帧更新’与其互斥。")
+            self.log.appendPlainText(
+                self.l(
+                    "已关闭‘正常速率视频’，因为‘ASS按帧更新’与其互斥。",
+                    "Disabled 'Real-time Video' because it conflicts with 'ASS Per-frame Update'.",
+                )
+            )
         self.spin_ups.setEnabled(not checked)
 
     def on_normal_speed_toggled(self, checked: bool) -> None:
@@ -341,10 +454,20 @@ class MainWindow(QMainWindow):
             self.suppress_mode_toggle = True
             self.chk_per_frame_ass.setChecked(False)
             self.suppress_mode_toggle = False
-            self.log.appendPlainText("已关闭‘ASS按帧更新’，因为‘正常速率视频’与其互斥。")
+            self.log.appendPlainText(
+                self.l(
+                    "已关闭‘ASS按帧更新’，因为‘正常速率视频’与其互斥。",
+                    "Disabled 'ASS Per-frame Update' because it conflicts with 'Real-time Video'.",
+                )
+            )
         self.spin_interval.setEnabled(not checked)
         if checked:
-            self.log.appendPlainText("已启用正常速率模式: 拍摄间隔参数将被忽略。")
+            self.log.appendPlainText(
+                self.l(
+                    "已启用正常速率模式: 拍摄间隔参数将被忽略。",
+                    "Real-time mode enabled: capture interval will be ignored.",
+                )
+            )
 
     def on_export_mode_changed(self, _index: int) -> None:
         is_hard = self.combo_export_mode.currentIndex() == 0
@@ -373,7 +496,7 @@ class MainWindow(QMainWindow):
                 self.presets = {}
         except Exception as ex:
             self.presets = {}
-            self.log.appendPlainText(f"读取配置文件失败: {ex}")
+            self.log.appendPlainText(self.l("读取配置文件失败", "Failed to read preset file") + f": {ex}")
         self.refresh_preset_combo()
 
     def save_presets_to_disk(self) -> None:
@@ -439,44 +562,52 @@ class MainWindow(QMainWindow):
         self.update_preview_text()
 
     def on_save_preset(self) -> None:
-        name, ok = QInputDialog.getText(self, "保存配置", "请输入配置名称:")
+        name, ok = QInputDialog.getText(
+            self,
+            self.l("保存配置", "Save Preset"),
+            self.l("请输入配置名称:", "Please enter preset name:"),
+        )
         if not ok:
             return
         name = name.strip()
         if not name:
-            QMessageBox.warning(self, "名称为空", "请输入有效的配置名称。")
+            QMessageBox.warning(self, self.l("名称为空", "Empty Name"), self.l("请输入有效的配置名称。", "Please enter a valid preset name."))
             return
         self.presets[name] = self.collect_current_config()
         self.save_presets_to_disk()
         self.refresh_preset_combo()
         self.combo_preset.setCurrentText(name)
-        self.log.appendPlainText(f"配置已保存: {name} -> {self.preset_file}")
+        self.log.appendPlainText(self.l("配置已保存", "Preset saved") + f": {name} -> {self.preset_file}")
 
     def on_load_preset(self) -> None:
         name = self.combo_preset.currentText().strip()
         if not name:
-            QMessageBox.warning(self, "未选择配置", "请先选择一个配置。")
+            QMessageBox.warning(self, self.l("未选择配置", "No Preset Selected"), self.l("请先选择一个配置。", "Please select a preset first."))
             return
         cfg = self.presets.get(name)
         if not isinstance(cfg, dict):
-            QMessageBox.warning(self, "配置不存在", "选择的配置无效。")
+            QMessageBox.warning(self, self.l("配置不存在", "Preset Not Found"), self.l("选择的配置无效。", "The selected preset is invalid."))
             return
         self.apply_config(cfg)
-        self.log.appendPlainText(f"已加载配置: {name}")
+        self.log.appendPlainText(self.l("已加载配置", "Preset loaded") + f": {name}")
 
     def on_delete_preset(self) -> None:
         name = self.combo_preset.currentText().strip()
         if not name:
-            QMessageBox.warning(self, "未选择配置", "请先选择一个配置。")
+            QMessageBox.warning(self, self.l("未选择配置", "No Preset Selected"), self.l("请先选择一个配置。", "Please select a preset first."))
             return
-        reply = QMessageBox.question(self, "删除配置", f"确认删除配置: {name} ?")
+        reply = QMessageBox.question(
+            self,
+            self.l("删除配置", "Delete Preset"),
+            self.l("确认删除配置", "Confirm deleting preset") + f": {name} ?",
+        )
         if reply != QMessageBox.StandardButton.Yes:
             return
         if name in self.presets:
             del self.presets[name]
             self.save_presets_to_disk()
             self.refresh_preset_combo()
-            self.log.appendPlainText(f"已删除配置: {name}")
+            self.log.appendPlainText(self.l("已删除配置", "Preset deleted") + f": {name}")
 
     def fit_scene_to_view(self) -> None:
         self.preview_view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
@@ -494,9 +625,9 @@ class MainWindow(QMainWindow):
     def on_open_video(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "选择视频",
+            self.l("选择视频", "Choose Video"),
             "",
-            "视频文件 (*.mp4 *.mov *.mkv *.avi);;所有文件 (*)",
+            self.l("视频文件 (*.mp4 *.mov *.mkv *.avi);;所有文件 (*)", "Video Files (*.mp4 *.mov *.mkv *.avi);;All Files (*)"),
         )
         if not file_path:
             return
@@ -519,7 +650,7 @@ class MainWindow(QMainWindow):
 
         self.on_probe()
         self.update_preview_text()
-        self.log.appendPlainText(f"已加载视频: {self.video_path}")
+        self.log.appendPlainText(self.l("已加载视频", "Video loaded") + f": {self.video_path}")
 
     def on_play_pause(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -531,11 +662,19 @@ class MainWindow(QMainWindow):
         if not self.video_path:
             return
         if not self.ffprobe_bin:
-            self.log.appendPlainText("未找到 ffprobe：请安装 FFmpeg，或将 ffprobe.exe 放到程序目录。")
+            self.log.appendPlainText(
+                self.l(
+                    "未找到 ffprobe：请安装 FFmpeg，或将 ffprobe.exe 放到程序目录。",
+                    "ffprobe not found: install FFmpeg or place ffprobe.exe next to the app.",
+                )
+            )
             QMessageBox.warning(
                 self,
-                "缺少 FFprobe",
-                "未找到 ffprobe。\n请安装 FFmpeg 并加入 PATH，或把 ffprobe.exe 放到程序同目录。",
+                self.l("缺少 FFprobe", "FFprobe Missing"),
+                self.l(
+                    "未找到 ffprobe。\n请安装 FFmpeg 并加入 PATH，或把 ffprobe.exe 放到程序同目录。",
+                    "ffprobe not found.\nInstall FFmpeg and add it to PATH, or put ffprobe.exe in the app folder.",
+                ),
             )
             return
         try:
@@ -554,19 +693,20 @@ class MainWindow(QMainWindow):
             self.place_overlay_text()
 
             self.log.appendPlainText(
-                f"视频信息: 时长={self.video_duration_sec:.3f}s, 帧率={self.video_fps:.3f}, 分辨率={self.video_width}x{self.video_height}, 编码={self.video_codec}"
+                self.l("视频信息", "Video info")
+                + f": duration={self.video_duration_sec:.3f}s, fps={self.video_fps:.3f}, size={self.video_width}x{self.video_height}, codec={self.video_codec}"
             )
         except Exception as ex:
-            self.log.appendPlainText(f"读取元信息失败: {ex}")
+            self.log.appendPlainText(self.l("读取元信息失败", "Failed to read metadata") + f": {ex}")
 
     def on_generate_ass(self) -> None:
         if not self.video_path:
-            QMessageBox.warning(self, "未加载视频", "请先加载视频。")
+            QMessageBox.warning(self, self.l("未加载视频", "No Video Loaded"), self.l("请先加载视频。", "Please load a video first."))
             return
 
         output_text = self.edit_output.text().strip()
         if not output_text:
-            QMessageBox.warning(self, "未设置输出", "请先设置输出视频路径。")
+            QMessageBox.warning(self, self.l("未设置输出", "No Output Set"), self.l("请先设置输出视频路径。", "Please set output video path first."))
             return
 
         output_path = Path(output_text)
@@ -590,15 +730,15 @@ class MainWindow(QMainWindow):
             per_frame_updates=self.chk_per_frame_ass.isChecked(),
         )
         self.generated_ass_path = ass_path
-        self.log.appendPlainText(f"已生成字幕(会覆盖同名文件): {ass_path}")
+        self.log.appendPlainText(self.l("已生成字幕(会覆盖同名文件)", "Subtitle generated (same-name file will be overwritten)") + f": {ass_path}")
 
     def on_load_ass_preview(self) -> None:
         default = str(self.generated_ass_path) if self.generated_ass_path else ""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "选择ASS字幕",
+            self.l("选择ASS字幕", "Choose ASS Subtitle"),
             default,
-            "ASS 字幕 (*.ass);;所有文件 (*)",
+            self.l("ASS 字幕 (*.ass);;所有文件 (*)", "ASS Subtitle (*.ass);;All Files (*)"),
         )
         if not file_path:
             return
@@ -607,16 +747,19 @@ class MainWindow(QMainWindow):
         try:
             events = parse_ass_events(ass_path)
             if not events:
-                raise ValueError("字幕文件未解析到任何对话事件")
+                raise ValueError(self.l("字幕文件未解析到任何对话事件", "No dialogue events parsed from subtitle file"))
             self.ass_preview_events = events
             self.ass_preview_cursor = 0
             self.last_media_sec = -1.0
             self.chk_use_ass_preview.setChecked(True)
-            self.log.appendPlainText(f"已加载字幕预览: {ass_path} (事件数: {len(events)})")
+            self.log.appendPlainText(
+                self.l("已加载字幕预览", "Subtitle preview loaded")
+                + f": {ass_path} ({self.l('事件数', 'events')}: {len(events)})"
+            )
             self.update_preview_text()
         except Exception as ex:
-            self.log.appendPlainText(f"加载字幕失败: {ex}")
-            QMessageBox.warning(self, "加载失败", str(ex))
+            self.log.appendPlainText(self.l("加载字幕失败", "Failed to load subtitle") + f": {ex}")
+            QMessageBox.warning(self, self.l("加载失败", "Load Failed"), str(ex))
 
     def on_export_20s(self) -> None:
         self.export_video(preview_20s=True)
@@ -626,12 +769,12 @@ class MainWindow(QMainWindow):
 
     def export_video(self, preview_20s: bool) -> None:
         if not self.video_path:
-            QMessageBox.warning(self, "未加载视频", "请先加载视频。")
+            QMessageBox.warning(self, self.l("未加载视频", "No Video Loaded"), self.l("请先加载视频。", "Please load a video first."))
             return
 
         output_text = self.edit_output.text().strip()
         if not output_text:
-            QMessageBox.warning(self, "未设置输出", "请先设置输出视频路径。")
+            QMessageBox.warning(self, self.l("未设置输出", "No Output Set"), self.l("请先设置输出视频路径。", "Please set output video path first."))
             return
 
         output_path = Path(output_text)
@@ -649,11 +792,19 @@ class MainWindow(QMainWindow):
         if self.video_duration_sec <= 0.0:
             self.on_probe()
         if not self.ffmpeg_bin:
-            self.log.appendPlainText("未找到 ffmpeg：请安装 FFmpeg，或将 ffmpeg.exe 放到程序目录。")
+            self.log.appendPlainText(
+                self.l(
+                    "未找到 ffmpeg：请安装 FFmpeg，或将 ffmpeg.exe 放到程序目录。",
+                    "ffmpeg not found: install FFmpeg or place ffmpeg.exe next to the app.",
+                )
+            )
             QMessageBox.warning(
                 self,
-                "缺少 FFmpeg",
-                "未找到 ffmpeg。\n请安装 FFmpeg 并加入 PATH，或把 ffmpeg.exe 放到程序同目录。",
+                self.l("缺少 FFmpeg", "FFmpeg Missing"),
+                self.l(
+                    "未找到 ffmpeg。\n请安装 FFmpeg 并加入 PATH，或把 ffmpeg.exe 放到程序同目录。",
+                    "ffmpeg not found.\nInstall FFmpeg and add it to PATH, or put ffmpeg.exe in the app folder.",
+                ),
             )
             return
 
@@ -698,7 +849,7 @@ class MainWindow(QMainWindow):
                 duration_sec=duration_sec,
             )
 
-        label = "开始导出20秒测试" if preview_20s else "开始导出全片"
+        label = self.l("开始导出20秒测试", "Start exporting 20s test") if preview_20s else self.l("开始导出全片", "Start exporting full video")
         self.log.appendPlainText(f"{label}: " + " ".join(cmd))
         self.btn_export.setEnabled(False)
         self.btn_export_20s.setEnabled(False)
@@ -729,7 +880,7 @@ class MainWindow(QMainWindow):
 
     def update_preview_text(self) -> None:
         if not self.video_path:
-            self.overlay_item.setPlainText("OSD 预览")
+            self.overlay_item.setPlainText(self.l("OSD 预览", "OSD Preview"))
             self.place_overlay_text()
             return
 
@@ -804,9 +955,9 @@ class MainWindow(QMainWindow):
         self.btn_export.setEnabled(True)
         self.btn_export_20s.setEnabled(True)
         if exit_code == 0:
-            self.log.appendPlainText("渲染完成。")
+            self.log.appendPlainText(self.l("渲染完成。", "Render finished."))
         else:
-            self.log.appendPlainText(f"渲染失败，退出码: {exit_code}")
+            self.log.appendPlainText(self.l("渲染失败，退出码", "Render failed, exit code") + f": {exit_code}")
 
     def append_process_output(self) -> None:
         stdout = bytes(self.process.readAllStandardOutput()).decode(errors="replace")
