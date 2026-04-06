@@ -8,3 +8,5 @@ timeosd_presets.json
 dist/
 build/
 *.spec
+release_assets/
+*.exe
